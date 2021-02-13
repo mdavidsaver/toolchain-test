@@ -12,14 +12,21 @@ jobs:
     prepare:
         name: Process prep
         runs-on: ubuntu-20.04
+        outputs:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
         steps:
             - uses: actions/checkout@v2
+            - name: Info
+              run: |
+                echo "REF: ${{ github.ref }}"
             - name: Create Release
               if: true
               id: create_release
               run: |
                 echo "Placeholder for actions/checkout@v2 if tagged build"
-                run: echo "MAGICID=42" >> $GITHUB_ENV
+                echo "::set-output name=upload_url::http://magic/url"
+            - name: Test
+              run: echo "${{ toJSON(steps) }}"
 
     # Avoid duplication of building a toolchain for each BSP
     toolchain:
@@ -48,10 +55,16 @@ jobs:
                   name: toolchain-${{ matrix.arch }}
                   path: toolchain.tar.bz2
                   retention-days: 1
+            - name: explore
+              run: |
+                echo "${{ toJSON(needs) }}"
 
+    # Build kernel for individual BSPs use pre-arch toolchain
     bsp:
         name: BSP ${{ matrix.bsp }}
-        needs: toolchain
+        # must depend on prepare to populate ${{ needs.prepare ...
+        needs: [prepare, toolchain]
+        runs-on: ubuntu-20.04
         strategy:
             fail-fast: false
             matrix:
@@ -87,10 +100,6 @@ jobs:
                 sudo install -d -o $USER /opt/rtems/5
                 tar -C / -xaf ../toolchain.tar.bz2
                 ls /opt/rtems/5
-            - name: system deps
-              run: sudo apt-get -y update && sudo apt-get -y install bison flex texinfo unzip git python-dev qemu-system-x86 cmake
-            - name: check
-              run: ../source-builder/sb-check
             - name: build kernel
               run: ../build-bsp.sh /opt/rtems/5 ${{ matrix.arch }} ${{ matrix.bsp }}
             - name: tar
