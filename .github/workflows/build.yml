@@ -1,0 +1,109 @@
+name: toolchain test
+
+on: [push, pull_request]
+
+defaults:
+  run:
+    working-directory: rtems
+
+jobs:
+    # For tag builds, Create a release.  Later jobs will use ${{ steps.create_release.outputs.upload_url }}
+    # https://github.com/actions/upload-release-asset
+    prepare:
+        name: Process prep
+        runs-on: ubuntu-20.04
+        steps:
+            - uses: actions/checkout@v2
+            - name: Create Release
+              if: true
+              id: create_release
+              run: |
+                echo "Placeholder for actions/checkout@v2 if tagged build"
+                run: echo "MAGICID=42" >> $GITHUB_ENV
+
+    # Avoid duplication of building a toolchain for each BSP
+    toolchain:
+        name: Toolchain ${{ matrix.arch }}
+        needs: prepare
+        runs-on: ubuntu-20.04
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                - arch: i386
+                - arch: powerpc
+                - arch: arm
+                - arch: m68k
+        steps:
+            - uses: actions/checkout@v2
+            - name: setup prefix
+              run: sudo install -d -o $USER /opt/rtems/5
+            - name: build
+              run: ../build-toolchain.sh /opt/rtems/5 ${{ matrix.arch }}
+            - name: tar
+              run: tar -C / -cavf ../toolchain.tar.bz2 /opt/rtems/5
+            - name: stash
+              uses: actions/upload-artifact@v2
+              with:
+                  name: toolchain-${{ matrix.arch }}
+                  path: toolchain.tar.bz2
+                  retention-days: 1
+
+    bsp:
+        name: BSP ${{ matrix.bsp }}
+        needs: toolchain
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                - arch: i386
+                  bsp: pc686
+                  
+                - arch: powerpc
+                  bsp: mvme3100
+
+                - arch: powerpc
+                  bsp: beatnik
+
+                - arch: powerpc
+                  bsp: mvme2100
+
+                - arch: powerpc
+                  bsp: qoriq_e500
+
+                - arch: arm
+                  bsp: xilinx_zynq_a9_qemu
+
+                - arch: m68k
+                  bsp: mvme167
+        steps:
+            - uses: actions/checkout@v2
+            - name: Download a single artifact
+              uses: actions/download-artifact@v2
+              with:
+                  name: toolchain-${{ matrix.arch }}
+            - name: setup prefix
+              run: |
+                sudo install -d -o $USER /opt/rtems/5
+                tar -C / -xaf ../toolchain.tar.bz2
+                ls /opt/rtems/5
+            - name: system deps
+              run: sudo apt-get -y update && sudo apt-get -y install bison flex texinfo unzip git python-dev qemu-system-x86 cmake
+            - name: check
+              run: ../source-builder/sb-check
+            - name: build kernel
+              run: ../build-bsp.sh /opt/rtems/5 ${{ matrix.arch }} ${{ matrix.bsp }}
+            - name: tar
+              run: |
+                tar -C / -cavf ../${{ matrix.arch }}-${{ matrix.bsp }}-rtems${RVER}.tar.bz2 /opt/rtems/5
+            - name: stash
+              uses: actions/upload-artifact@v2
+              with:
+                  name: bsp-${{ matrix.bsp }}
+                  path: ./${{ matrix.arch }}-${{ matrix.bsp }}-rtems*.tar.bz2
+                  retention-days: 1
+            - name: release
+              if: true
+              run: |
+                echo "Placeholder for actions/upload-release-asset@v1"
+                echo "${{ toJSON(needs) }}"
